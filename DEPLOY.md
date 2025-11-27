@@ -7,6 +7,22 @@ This guide will help you deploy your Invincible Me application to Render.
 1. A GitHub account (you already have this)
 2. A Render account (sign up at https://render.com)
 
+## GitHub Integration
+
+**Good News!** Render automatically deploys from GitHub when you connect your repository. Every push to `main` will trigger an automatic deployment.
+
+### Automatic Deployment (Recommended)
+When you connect your GitHub repo to Render, it will:
+- ✅ Automatically deploy on every push to `main`
+- ✅ Show deployment status in Render dashboard
+- ✅ Rollback to previous versions if needed
+
+### GitHub Actions (Optional)
+I've also set up GitHub Actions workflows that:
+- ✅ Verify builds before deployment
+- ✅ Test builds on pull requests
+- ✅ Can trigger Render deployments via API (requires API key setup)
+
 ## Deployment Options
 
 ### Option 1: Single Service Deployment (Recommended)
