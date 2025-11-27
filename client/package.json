@@ -9,8 +9,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "predeploy": "npm run build",
-    "deploy": "VITE_API_BASE=https://invincible-me.onrender.com/api npm run build && gh-pages -d dist --repo https://github.com/josuecikanga-creator/invincible-me.git"
+    "predeploy": "npm run build"
   },
   "dependencies": {
     "gh-pages": "^6.3.0",
