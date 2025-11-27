@@ -75,7 +75,6 @@ const explorerPrompts = [
   },
 ];
 
-const collaborationFocus = ['Creative expression', 'Faith & values', 'Academic flow', 'Wellbeing rituals', 'Leadership sparks'];
 
 const pickPrompt = (mode) => {
   const source = mode === 'anchored' ? anchoredPrompts : explorerPrompts;
@@ -123,8 +122,6 @@ function App() {
   });
   const [matchStatus, setMatchStatus] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
 
   const [journalTitle, setJournalTitle] = useState('');
   const [journalBody, setJournalBody] = useState('');
@@ -151,6 +148,18 @@ function App() {
     concerns: '',
     reminders: [],
   });
+
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('invincible-theme');
+      if (saved) return saved;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return 'light';
+  });
+
+  const [isScrollingDown, setIsScrollingDown] = useState(false);
+  const [lastScrollY, setLastScrollY] = useState(0);
 
   const refreshSummary = async () => {
     const data = await fetchJSON('/summary');
@@ -223,6 +232,36 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('invincible-theme', theme);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      
+      if (currentScrollY > lastScrollY && currentScrollY > 100) {
+        // Scrolling down and past 100px
+        setIsScrollingDown(true);
+      } else if (currentScrollY < lastScrollY) {
+        // Scrolling up
+        setIsScrollingDown(false);
+      }
+      
+      setLastScrollY(currentScrollY);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [lastScrollY]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
   const refreshSpotlightPrompt = useCallback(
     async (intention = '', recordMessage = false) => {
       const fallback = pickPrompt(personaMode);
@@ -231,9 +270,6 @@ function App() {
       }
 
       try {
-        if (recordMessage) {
-          setChatLoading(true);
-        }
         const { prompt } = await fetchJSON('/ai/prompts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -269,10 +305,6 @@ function App() {
           ]);
           setErrorMessage(error.message);
         }
-      } finally {
-        if (recordMessage) {
-          setChatLoading(false);
-        }
       }
     },
     [personaMode, identity],
@@ -297,25 +329,6 @@ function App() {
     }
   }, [chatMessages.length, spotlightPrompt]);
 
-  const handleChatSubmit = async (event) => {
-    event.preventDefault();
-    const trimmed = chatInput.trim();
-    if (!trimmed) {
-      await refreshSpotlightPrompt('Give me a gentle prompt', true);
-      return;
-    }
-
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-user`,
-        role: 'user',
-        text: trimmed,
-      },
-    ]);
-    setChatInput('');
-    await refreshSpotlightPrompt(trimmed, true);
-  };
 
   const latestReflections = useMemo(() => reflections.slice(0, 3), [reflections]);
   const filteredMentors = useMemo(
@@ -323,30 +336,6 @@ function App() {
       mentors.filter((mentor) => mentor.name.toLowerCase().includes(searchTerm.toLowerCase()) || mentor.focus.toLowerCase().includes(searchTerm.toLowerCase())),
     [mentors, searchTerm],
   );
-  const personaAccent = useMemo(() => personaConfigs[personaMode], [personaMode]);
-  const studioTracks = useMemo(() => {
-    const ritualSet = personaAccent.rituals;
-    return [
-      {
-        title: personaMode === 'anchored' ? 'Integrity Studio' : 'Discovery Studio',
-        description:
-          personaMode === 'anchored'
-            ? 'Protect the rituals that keep you rooted. Document what worked.'
-            : 'Name the sparks that feel like you. Trace the pattern.',
-        focus: ritualSet[0],
-        micro: personaMode === 'anchored' ? 'Celebrate one aligned decision' : 'Capture one curiosity trail',
-      },
-      {
-        title: personaMode === 'anchored' ? 'Alignment Field Notes' : 'Exploration Field Notes',
-        description:
-          personaMode === 'anchored'
-            ? 'Log campus moments where you stayed true to yourself.'
-            : 'Experiment with low-stakes identity try-ons.',
-        focus: ritualSet[1],
-        micro: personaMode === 'anchored' ? 'Share the win with future-self' : 'What did you notice?',
-      },
-    ];
-  }, [personaAccent, personaMode]);
 
   const communityMatches = useMemo(() => {
     if (!communities.length) return [];
@@ -508,19 +497,6 @@ function App() {
   const growthScore = Math.min(95, (summary?.totalCheckIns || 0) * 7 + 35);
   const streak = checkIns.length;
 
-  const personaAffirmations = useMemo(() => {
-    const anchorScore = Math.min(100, (identity?.values?.length || 1) * 15 + streak * 3);
-    const explorationScore = Math.min(12, reflections.length + checkIns.length);
-    return personaMode === 'anchored'
-      ? [
-          { label: 'Alignment score', value: `${anchorScore}%` },
-          { label: 'Values repeated this week', value: `${(summary?.identityAnchors?.length ?? 0) || 3}` },
-        ]
-      : [
-          { label: 'Discovery sparks', value: `${explorationScore} clues` },
-          { label: 'New values logged', value: `${identity?.values?.length ?? 0}` },
-        ];
-  }, [personaMode, identity, streak, reflections.length, checkIns.length, summary]);
 
   const journeyCopy = useMemo(
     () =>
@@ -538,7 +514,6 @@ function App() {
     [personaMode],
   );
 
-  const highlightedValues = identity?.values?.slice(0, 2).join(' · ') || 'Add your values';
 
   const onboardingScreens = () => {
     if (onboardingStep === 1) {
@@ -648,53 +623,43 @@ function App() {
 
   const renderHome = () => (
     <section className="screen home-screen">
-      <div className="hero-layout glass">
+      <div className="hero-layout">
         <div className="hero-copy-block">
-          <p className="pill">Identity OS</p>
+          <div className="logo-container">
+            <span className="logo-ime">iME</span>
+          </div>
           <h1>{journeyCopy.heroTitle}</h1>
           <p className="lede">{journeyCopy.description}</p>
           <div className="hero-actions">
             <button className="primary" type="button" onClick={() => setActiveScreen('Journal')}>
-              Start a reflection
+              Get started
             </button>
-            <button className="ghost" type="button" onClick={() => refreshSpotlightPrompt()}>
-              New prompt
+            <button className="ghost" type="button" onClick={() => setActiveScreen('Profile')}>
+              Learn more
             </button>
           </div>
           <div className="hero-meta">
             <div>
-              <p className="micro">Identity streak</p>
+              <p className="micro">Streak</p>
               <strong>{streak} days</strong>
             </div>
             <div>
-              <p className="micro">Anchors today</p>
-              <strong>{highlightedValues}</strong>
+              <p className="micro">Check-ins</p>
+              <strong>{summary?.totalCheckIns ?? 0}</strong>
             </div>
-          </div>
-        </div>
-        <div className="hero-panel glass">
-          <p className="micro">Grounding overview</p>
-          <h2>{summary?.totalCheckIns ?? 0} guided check-ins</h2>
-          <p>
-            {summary?.negativeInfluence ?? 0} pressure flags · {summary?.stressSignals ?? 0} stress signals
-          </p>
-          <div className="hero-panel-grid">
-            {personaAffirmations.map((item) => (
-              <div key={item.label} className="affirmation-chip">
-                <p className="micro">{item.label}</p>
-                <strong>{item.value}</strong>
-              </div>
-            ))}
+            <div>
+              <p className="micro">Values</p>
+              <strong>{identity?.values?.length ?? 0}</strong>
+            </div>
           </div>
         </div>
       </div>
 
       <section className="section-block identity-mode-section">
         <div className="section-heading">
-          <p className="micro">Personalized focus</p>
-          <h3>Choose the journey that mirrors where you are.</h3>
+          <h3>Choose your journey.</h3>
         </div>
-        <div className="identity-mode-grid compact">
+        <div className="identity-mode-grid">
           {Object.entries(personaConfigs).map(([mode, config]) => (
             <button
               key={mode}
@@ -703,44 +668,35 @@ function App() {
               onClick={() => setPersonaMode(mode)}
             >
               <div>
-                <p className="micro">{mode === 'anchored' ? 'Identity builders' : 'Identity explorers'}</p>
                 <h3>{config.title}</h3>
                 <p>{config.subtitle}</p>
               </div>
-              <span>{personaMode === mode ? 'Selected' : 'Tap to focus'}</span>
             </button>
           ))}
         </div>
       </section>
 
       <section className="section-block">
-        <div className="section-heading section-heading--inline">
-          <div>
-            <p className="micro">Daily grounding</p>
-            <h3>Stay rooted with prompts, check-ins, and coaching.</h3>
-          </div>
-          <button type="button" className="ghost" onClick={() => setActiveScreen('Journal')}>
-            Open journal
-          </button>
+        <div className="section-heading">
+          <h3>Daily practice.</h3>
         </div>
         <div className="focus-grid">
           <article className="canvas-card glass prompt-card">
-            <p className="micro">{spotlightPrompt.title || 'Identity prompt'}</p>
-            <h3>{spotlightPrompt.prompt}</h3>
-            <p>{spotlightPrompt.reflection}</p>
-            <p className="note">{spotlightPrompt.followUp}</p>
+            <p className="micro">{spotlightPrompt.title || 'Today\'s prompt'}</p>
+            <h4>{spotlightPrompt.prompt}</h4>
+            <p className="note">{spotlightPrompt.reflection}</p>
             <div className="prompt-actions">
               <button className="secondary" type="button" onClick={() => refreshSpotlightPrompt()}>
-                Shuffle prompt
+                New prompt
               </button>
               <button className="link" type="button" onClick={() => setActiveScreen('Journal')}>
-                Journal now →
+                Journal →
               </button>
             </div>
           </article>
 
           <article className="canvas-card glass checkin-card">
-            <p className="micro">Daily grounding check-in</p>
+            <p className="micro">Quick check-in</p>
             <form className="stack" onSubmit={handleMoodSubmit}>
               <div className="mood-picker">
                 {moodPalette.map((mood) => (
@@ -773,41 +729,11 @@ function App() {
               <textarea
                 value={moodNote}
                 onChange={(event) => setMoodNote(event.target.value)}
-                placeholder={personaMode === 'anchored' ? 'Where did you hold your ground?' : 'What did you learn about yourself?'}
+                placeholder="Add a note..."
+                rows="3"
               />
               <button className="primary" type="submit" disabled={saving === 'mood'}>
-                {saving === 'mood' ? 'Submitting...' : 'Share pulse'}
-              </button>
-            </form>
-          </article>
-
-          <article className="canvas-card glass ai-card">
-            <div className="section-heading">
-              <p className="micro">AI prompt companion</p>
-              <h4>Describe what you need support with.</h4>
-            </div>
-            <div className="companion-feed">
-              {chatMessages.length ? (
-                <ul>
-                  {chatMessages.slice(-4).map((message) => (
-                    <li key={message.id} className={`chat-message ${message.role}`}>
-                      <p>{message.text}</p>
-                      {message.detail && <small>{message.detail.followUp}</small>}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="note">Tell the companion what kind of prompt you need (e.g. “I’m doubting my abilities”).</p>
-              )}
-            </div>
-            <form className="chat-form" onSubmit={handleChatSubmit}>
-              <input
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder="Ask for a prompt about..."
-              />
-              <button className="primary" type="submit" disabled={chatLoading}>
-                {chatLoading ? 'Shaping...' : 'Generate'}
+                {saving === 'mood' ? 'Saving...' : 'Save'}
               </button>
             </form>
           </article>
@@ -816,51 +742,24 @@ function App() {
 
       <section className="section-block">
         <div className="section-heading">
-          <p className="micro">Identity studios</p>
-          <h3>Build rhythms that keep you centered.</h3>
-        </div>
-        <div className="studio-strip">
-          {studioTracks.map((track) => (
-            <article key={track.title} className="studio-card glass">
-              <div>
-                <p className="micro">{track.focus}</p>
-                <h4>{track.title}</h4>
-                <p>{track.description}</p>
-              </div>
-              <p className="tag">{track.micro}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading">
-          <p className="micro">Navigate with intention</p>
-          <h3>Choose what you need next.</h3>
+          <h3>Explore more.</h3>
         </div>
         <div className="secondary-grid">
           <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Journal')}>
-            <p className="micro">Reflection journal</p>
-            <h4>Keep a note that locks your values in.</h4>
+            <h4>Journal</h4>
+            <p>Reflect and grow</p>
           </button>
           <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Scenarios')}>
-            <p className="micro">Scenario studio</p>
-            <h4>Rehearse peer-pressure moments in calm mode.</h4>
+            <h4>Scenarios</h4>
+            <p>Practice responses</p>
           </button>
           <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Connect')}>
-            <p className="micro">Identity collaborations</p>
-            <h4>Find students who mirror your values.</h4>
-            <div className="chip-row">
-              {collaborationFocus.slice(0, 3).map((focus) => (
-                <span key={focus} className="chip">
-                  {focus}
-                </span>
-              ))}
-            </div>
+            <h4>Connect</h4>
+            <p>Find your community</p>
           </button>
           <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Mentors')}>
-            <p className="micro">Mentor marketplace</p>
-            <h4>Book upper-years who keep you accountable.</h4>
+            <h4>Mentors</h4>
+            <p>Get guidance</p>
           </button>
         </div>
       </section>
@@ -1221,24 +1120,10 @@ function App() {
 
   return (
     <main className="app-shell">
+      <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme">
+        {theme === 'light' ? '🌙' : '☀️'}
+      </button>
       {!hasOnboarded && <div className="onboarding-overlay">{onboardingScreens()}</div>}
-      <header className="hero wire">
-        <div className="hero-copy">
-          <p className="pill">Hi Julianne!</p>
-          <h1>Stay rooted in who you are, even when campus feels loud.</h1>
-          <p className="lede">
-            Track your emotions, rehearse peer-pressure moments, and connect to mentors who keep you grounded.
-          </p>
-        </div>
-        <div className="hero-card wire">
-          <p className="micro">Snapshot</p>
-          <h2>{summary?.totalCheckIns ?? 0} check-ins</h2>
-          <p>{summary?.negativeInfluence ?? 0} pressure flags · {summary?.stressSignals ?? 0} stress signals</p>
-          <button type="button" className="outline" onClick={() => setActiveScreen('Premium')}>
-            See premium insights
-          </button>
-        </div>
-      </header>
 
       {errorMessage && <p className="error-banner">{errorMessage}</p>}
 
@@ -1249,7 +1134,7 @@ function App() {
         <small>© {new Date().getFullYear()} Invincible Me</small>
       </footer>
 
-      <nav className="bottom-nav">
+      <nav className={`bottom-nav ${isScrollingDown ? 'hidden' : ''}`}>
         {NAV_ITEMS.map((item) => (
           <button
             key={item}
