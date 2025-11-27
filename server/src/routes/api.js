@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const store = require('../data/store');
 const { buildSuggestions } = require('../utils/suggestions');
+const { generatePrompt } = require('../utils/prompts');
 
 const router = express.Router();
 
@@ -122,6 +123,21 @@ router.get('/alerts', (req, res) => {
 
 router.get('/simulator', (req, res) => {
   res.json(store.simulatorScenarios);
+});
+
+router.post('/ai/prompts', async (req, res) => {
+  const { persona = 'anchored', intention = '', values = [] } = req.body || {};
+  try {
+    const prompt = await generatePrompt({
+      persona,
+      intention,
+      values: values.length ? values : store.identityProfile.values,
+    });
+
+    res.json({ prompt });
+  } catch (error) {
+    res.status(502).json({ message: error.message || 'Prompt generation failed.' });
+  }
 });
 
 module.exports = router;

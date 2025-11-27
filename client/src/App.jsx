@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api';
 const defaultIdentity = { values: [], strengths: [], goals: [] };
-const NAV_ITEMS = ['Home', 'Journal', 'Scenarios', 'Mentors', 'Profile'];
+const NAV_ITEMS = ['Home', 'Journal', 'Scenarios', 'Mentors', 'Connect', 'Profile'];
 
 const reminderOptions = [
   { id: 'grounding', label: 'Grounding nudges' },
@@ -17,6 +17,70 @@ const moodPalette = [
   { id: 'mixed', icon: '😐', label: 'Mixed' },
   { id: 'stressed', icon: '😣', label: 'Stressed' },
 ];
+
+const personaConfigs = {
+  anchored: {
+    title: 'Rooted Builders',
+    subtitle: 'You already know your core. Keep living it louder.',
+    gradients: ['gradient-peach', 'gradient-nebula'],
+    rituals: ['Re-anchor rituals', 'Micro-celebrations', 'Mentor cadence'],
+  },
+  explorer: {
+    title: 'Curious Explorers',
+    subtitle: 'You are still naming the pieces. Let curiosity guide you.',
+    gradients: ['gradient-ink', 'gradient-sage'],
+    rituals: ['Low-stakes experiments', 'Observation walks', 'Creative dumps'],
+  },
+};
+
+const anchoredPrompts = [
+  {
+    title: 'Alignment trace',
+    prompt: 'Where did you feel most aligned with your values today?',
+    reflection: 'What part of your core values was affirmed?',
+    followUp: 'Name one micro-action that keeps that feeling alive tomorrow.',
+  },
+  {
+    title: 'Boundary keeper',
+    prompt: 'Who witnessed your authenticity this week?',
+    reflection: 'How did their presence support your identity?',
+    followUp: 'Send them a note or plan to recreate the moment.',
+  },
+  {
+    title: 'Peace protector',
+    prompt: 'What boundary protected your peace recently?',
+    reflection: 'What signal told you it was time to hold it?',
+    followUp: 'Write a reminder to future-you for the next pressure moment.',
+  },
+];
+
+const explorerPrompts = [
+  {
+    title: 'Curiosity sparks',
+    prompt: 'What sparked your curiosity today?',
+    reflection: 'What did that reveal about what matters to you?',
+    followUp: 'Design a tiny experiment that follows the spark tomorrow.',
+  },
+  {
+    title: 'True-moment scan',
+    prompt: 'Which micro-moment felt most like you this week?',
+    reflection: 'Why did it feel that way? Who were you with?',
+    followUp: 'Capture three words that describe the feeling.',
+  },
+  {
+    title: 'Value cameo',
+    prompt: 'What value showed up unexpectedly this week?',
+    reflection: 'Where else would you like to see it?',
+    followUp: 'List one place you can invite it in the next 48 hours.',
+  },
+];
+
+const collaborationFocus = ['Creative expression', 'Faith & values', 'Academic flow', 'Wellbeing rituals', 'Leadership sparks'];
+
+const pickPrompt = (mode) => {
+  const source = mode === 'anchored' ? anchoredPrompts : explorerPrompts;
+  return source[Math.floor(Math.random() * source.length)];
+};
 
 const trueSelfOptions = ['Yes', 'Somewhat', 'No'];
 const accountOptions = ['Email', 'Phone', 'University email'];
@@ -47,6 +111,20 @@ function App() {
   const [identity, setIdentity] = useState(defaultIdentity);
   const [identityForm, setIdentityForm] = useState({ values: '', strengths: '', goals: '' });
   const [mentors, setMentors] = useState([]);
+  const [communities, setCommunities] = useState([]);
+
+  const [personaMode, setPersonaMode] = useState('anchored');
+  const [spotlightPrompt, setSpotlightPrompt] = useState(() => pickPrompt('anchored'));
+  const [matchingForm, setMatchingForm] = useState({
+    interests: '',
+    values: '',
+    highlight: '',
+    preferAnonymous: true,
+  });
+  const [matchStatus, setMatchStatus] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   const [journalTitle, setJournalTitle] = useState('');
   const [journalBody, setJournalBody] = useState('');
@@ -82,13 +160,14 @@ function App() {
   useEffect(() => {
     const boot = async () => {
       try {
-        const [summaryData, checkInData, reflectionData, identityData, mentorData, simulatorData] = await Promise.all([
+        const [summaryData, checkInData, reflectionData, identityData, mentorData, simulatorData, communityData] = await Promise.all([
           fetchJSON('/summary'),
           fetchJSON('/checkins'),
           fetchJSON('/reflections'),
           fetchJSON('/identity'),
           fetchJSON('/mentors'),
           fetchJSON('/simulator'),
+          fetchJSON('/communities'),
         ]);
 
         setSummary(summaryData);
@@ -97,6 +176,7 @@ function App() {
         setIdentity(identityData);
         setMentors(mentorData);
         setSelectedScenario(simulatorData[0]);
+        setCommunities(communityData);
       } catch (error) {
         setErrorMessage(error.message);
       } finally {
@@ -118,6 +198,24 @@ function App() {
   }, [identity]);
 
   useEffect(() => {
+    setMatchingForm((prev) => {
+      if (prev.values) {
+        return prev;
+      }
+      const nextValues = identity?.values?.slice(0, 2).join(', ') || '';
+      const highlight = identity?.goals?.[0] ?? prev.highlight;
+      if (!nextValues && !highlight) {
+        return prev;
+      }
+      return {
+        ...prev,
+        values: nextValues || prev.values,
+        highlight,
+      };
+    });
+  }, [identity]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem('invincible-onboarded');
     if (stored === 'true') {
@@ -125,12 +223,150 @@ function App() {
     }
   }, []);
 
+  const refreshSpotlightPrompt = useCallback(
+    async (intention = '', recordMessage = false) => {
+      const fallback = pickPrompt(personaMode);
+      if (!recordMessage) {
+        setSpotlightPrompt(fallback);
+      }
+
+      try {
+        if (recordMessage) {
+          setChatLoading(true);
+        }
+        const { prompt } = await fetchJSON('/ai/prompts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            persona: personaMode,
+            intention,
+            values: identity?.values || [],
+          }),
+        });
+        setSpotlightPrompt(prompt);
+        if (recordMessage) {
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-assistant`,
+              role: 'assistant',
+              text: prompt.prompt,
+              detail: prompt,
+            },
+          ]);
+        }
+      } catch (error) {
+        setSpotlightPrompt(fallback);
+        if (recordMessage) {
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-fallback`,
+              role: 'assistant',
+              text: fallback.prompt,
+              detail: fallback,
+            },
+          ]);
+          setErrorMessage(error.message);
+        }
+      } finally {
+        if (recordMessage) {
+          setChatLoading(false);
+        }
+      }
+    },
+    [personaMode, identity],
+  );
+
+  useEffect(() => {
+    if (!loading) {
+      refreshSpotlightPrompt();
+    }
+  }, [loading, refreshSpotlightPrompt]);
+
+  useEffect(() => {
+    if (!chatMessages.length && spotlightPrompt) {
+      setChatMessages([
+        {
+          id: 'seed',
+          role: 'assistant',
+          text: spotlightPrompt.prompt,
+          detail: spotlightPrompt,
+        },
+      ]);
+    }
+  }, [chatMessages.length, spotlightPrompt]);
+
+  const handleChatSubmit = async (event) => {
+    event.preventDefault();
+    const trimmed = chatInput.trim();
+    if (!trimmed) {
+      await refreshSpotlightPrompt('Give me a gentle prompt', true);
+      return;
+    }
+
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-user`,
+        role: 'user',
+        text: trimmed,
+      },
+    ]);
+    setChatInput('');
+    await refreshSpotlightPrompt(trimmed, true);
+  };
+
   const latestReflections = useMemo(() => reflections.slice(0, 3), [reflections]);
   const filteredMentors = useMemo(
     () =>
       mentors.filter((mentor) => mentor.name.toLowerCase().includes(searchTerm.toLowerCase()) || mentor.focus.toLowerCase().includes(searchTerm.toLowerCase())),
     [mentors, searchTerm],
   );
+  const personaAccent = useMemo(() => personaConfigs[personaMode], [personaMode]);
+  const studioTracks = useMemo(() => {
+    const ritualSet = personaAccent.rituals;
+    return [
+      {
+        title: personaMode === 'anchored' ? 'Integrity Studio' : 'Discovery Studio',
+        description:
+          personaMode === 'anchored'
+            ? 'Protect the rituals that keep you rooted. Document what worked.'
+            : 'Name the sparks that feel like you. Trace the pattern.',
+        focus: ritualSet[0],
+        micro: personaMode === 'anchored' ? 'Celebrate one aligned decision' : 'Capture one curiosity trail',
+      },
+      {
+        title: personaMode === 'anchored' ? 'Alignment Field Notes' : 'Exploration Field Notes',
+        description:
+          personaMode === 'anchored'
+            ? 'Log campus moments where you stayed true to yourself.'
+            : 'Experiment with low-stakes identity try-ons.',
+        focus: ritualSet[1],
+        micro: personaMode === 'anchored' ? 'Share the win with future-self' : 'What did you notice?',
+      },
+    ];
+  }, [personaAccent, personaMode]);
+
+  const communityMatches = useMemo(() => {
+    if (!communities.length) return [];
+    const valueTokens = (matchingForm.values || '')
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean);
+
+    return communities
+      .map((community) => {
+        const theme = `${community.theme} ${community.description}`.toLowerCase();
+        const score = valueTokens.reduce((total, token) => (theme.includes(token) ? total + 1 : total), 0);
+        return {
+          ...community,
+          score: personaMode === 'anchored' ? score + 1 : score,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [communities, matchingForm.values, personaMode]);
 
   const handleMoodSubmit = async (event) => {
     event.preventDefault();
@@ -225,6 +461,20 @@ function App() {
     }
   };
 
+  const handleMatchingSubmit = (event) => {
+    event.preventDefault();
+    if (!matchingForm.interests.trim() || !matchingForm.values.trim()) {
+      setMatchStatus('Share at least one interest and value to request a match.');
+      return;
+    }
+    const topCommunity = communityMatches[0];
+    setMatchStatus(
+      topCommunity
+        ? `Signal sent. Watch for intros from ${topCommunity.name}.`
+        : 'Signal sent. We will notify you when peers are available.',
+    );
+  };
+
   const handleOnboardingIdentity = async (event) => {
     event.preventDefault();
     setSaving('onboarding');
@@ -257,6 +507,38 @@ function App() {
 
   const growthScore = Math.min(95, (summary?.totalCheckIns || 0) * 7 + 35);
   const streak = checkIns.length;
+
+  const personaAffirmations = useMemo(() => {
+    const anchorScore = Math.min(100, (identity?.values?.length || 1) * 15 + streak * 3);
+    const explorationScore = Math.min(12, reflections.length + checkIns.length);
+    return personaMode === 'anchored'
+      ? [
+          { label: 'Alignment score', value: `${anchorScore}%` },
+          { label: 'Values repeated this week', value: `${(summary?.identityAnchors?.length ?? 0) || 3}` },
+        ]
+      : [
+          { label: 'Discovery sparks', value: `${explorationScore} clues` },
+          { label: 'New values logged', value: `${identity?.values?.length ?? 0}` },
+        ];
+  }, [personaMode, identity, streak, reflections.length, checkIns.length, summary]);
+
+  const journeyCopy = useMemo(
+    () =>
+      personaMode === 'anchored'
+        ? {
+            heroTitle: 'Let everyone meet the real you.',
+            description: 'Ground yourself in rituals, boundary check-ins, and reflective prompts that keep your values loud.',
+            cta: 'Protect your rituals',
+          }
+        : {
+            heroTitle: 'Discover the threads that make you, you.',
+            description: 'Collect micro-moments, ask better questions, and let guided prompts help you name emerging values.',
+            cta: 'Explore your identity',
+          },
+    [personaMode],
+  );
+
+  const highlightedValues = identity?.values?.slice(0, 2).join(' · ') || 'Add your values';
 
   const onboardingScreens = () => {
     if (onboardingStep === 1) {
@@ -365,82 +647,223 @@ function App() {
   }
 
   const renderHome = () => (
-    <section className="screen">
-      <div className="card-grid">
-        <div className="home-card large">
-          <p className="micro">Daily mood & identity check-in</p>
-          <form className="stack" onSubmit={handleMoodSubmit}>
-            <div className="mood-picker">
-              {moodPalette.map((mood) => (
-                <button
-                  key={mood.id}
-                  type="button"
-                  className={moodSelection === mood.id ? 'active' : ''}
-                  onClick={() => setMoodSelection(mood.id)}
-                >
-                  <span>{mood.icon}</span>
-                  <small>{mood.label}</small>
-                </button>
-              ))}
+    <section className="screen home-screen">
+      <div className="hero-layout glass">
+        <div className="hero-copy-block">
+          <p className="pill">Identity OS</p>
+          <h1>{journeyCopy.heroTitle}</h1>
+          <p className="lede">{journeyCopy.description}</p>
+          <div className="hero-actions">
+            <button className="primary" type="button" onClick={() => setActiveScreen('Journal')}>
+              Start a reflection
+            </button>
+            <button className="ghost" type="button" onClick={() => refreshSpotlightPrompt()}>
+              New prompt
+            </button>
+          </div>
+          <div className="hero-meta">
+            <div>
+              <p className="micro">Identity streak</p>
+              <strong>{streak} days</strong>
             </div>
-            <div className="true-self-options">
-              <p>Did you feel true to yourself today?</p>
+            <div>
+              <p className="micro">Anchors today</p>
+              <strong>{highlightedValues}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="hero-panel glass">
+          <p className="micro">Grounding overview</p>
+          <h2>{summary?.totalCheckIns ?? 0} guided check-ins</h2>
+          <p>
+            {summary?.negativeInfluence ?? 0} pressure flags · {summary?.stressSignals ?? 0} stress signals
+          </p>
+          <div className="hero-panel-grid">
+            {personaAffirmations.map((item) => (
+              <div key={item.label} className="affirmation-chip">
+                <p className="micro">{item.label}</p>
+                <strong>{item.value}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <section className="section-block identity-mode-section">
+        <div className="section-heading">
+          <p className="micro">Personalized focus</p>
+          <h3>Choose the journey that mirrors where you are.</h3>
+        </div>
+        <div className="identity-mode-grid compact">
+          {Object.entries(personaConfigs).map(([mode, config]) => (
+            <button
+              key={mode}
+              type="button"
+              className={`identity-mode-card ${config.gradients[0]} ${personaMode === mode ? 'active' : ''}`}
+              onClick={() => setPersonaMode(mode)}
+            >
               <div>
-                {trueSelfOptions.map((option) => (
+                <p className="micro">{mode === 'anchored' ? 'Identity builders' : 'Identity explorers'}</p>
+                <h3>{config.title}</h3>
+                <p>{config.subtitle}</p>
+              </div>
+              <span>{personaMode === mode ? 'Selected' : 'Tap to focus'}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="section-block">
+        <div className="section-heading section-heading--inline">
+          <div>
+            <p className="micro">Daily grounding</p>
+            <h3>Stay rooted with prompts, check-ins, and coaching.</h3>
+          </div>
+          <button type="button" className="ghost" onClick={() => setActiveScreen('Journal')}>
+            Open journal
+          </button>
+        </div>
+        <div className="focus-grid">
+          <article className="canvas-card glass prompt-card">
+            <p className="micro">{spotlightPrompt.title || 'Identity prompt'}</p>
+            <h3>{spotlightPrompt.prompt}</h3>
+            <p>{spotlightPrompt.reflection}</p>
+            <p className="note">{spotlightPrompt.followUp}</p>
+            <div className="prompt-actions">
+              <button className="secondary" type="button" onClick={() => refreshSpotlightPrompt()}>
+                Shuffle prompt
+              </button>
+              <button className="link" type="button" onClick={() => setActiveScreen('Journal')}>
+                Journal now →
+              </button>
+            </div>
+          </article>
+
+          <article className="canvas-card glass checkin-card">
+            <p className="micro">Daily grounding check-in</p>
+            <form className="stack" onSubmit={handleMoodSubmit}>
+              <div className="mood-picker">
+                {moodPalette.map((mood) => (
                   <button
-                    key={option}
+                    key={mood.id}
                     type="button"
-                    className={trueSelf === option ? 'active' : ''}
-                    onClick={() => setTrueSelf(option)}
+                    className={moodSelection === mood.id ? 'active' : ''}
+                    onClick={() => setMoodSelection(mood.id)}
                   >
-                    {option}
+                    <span>{mood.icon}</span>
+                    <small>{mood.label}</small>
                   </button>
                 ))}
               </div>
+              <div className="true-self-options">
+                <p>Did you feel true to yourself today?</p>
+                <div>
+                  {trueSelfOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={trueSelf === option ? 'active' : ''}
+                      onClick={() => setTrueSelf(option)}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <textarea
+                value={moodNote}
+                onChange={(event) => setMoodNote(event.target.value)}
+                placeholder={personaMode === 'anchored' ? 'Where did you hold your ground?' : 'What did you learn about yourself?'}
+              />
+              <button className="primary" type="submit" disabled={saving === 'mood'}>
+                {saving === 'mood' ? 'Submitting...' : 'Share pulse'}
+              </button>
+            </form>
+          </article>
+
+          <article className="canvas-card glass ai-card">
+            <div className="section-heading">
+              <p className="micro">AI prompt companion</p>
+              <h4>Describe what you need support with.</h4>
             </div>
-            <textarea
-              value={moodNote}
-              onChange={(event) => setMoodNote(event.target.value)}
-              placeholder="Optional short note"
-            />
-            <button className="primary" type="submit" disabled={saving === 'mood'}>
-              {saving === 'mood' ? 'Submitting...' : 'Submit'}
-            </button>
-          </form>
+            <div className="companion-feed">
+              {chatMessages.length ? (
+                <ul>
+                  {chatMessages.slice(-4).map((message) => (
+                    <li key={message.id} className={`chat-message ${message.role}`}>
+                      <p>{message.text}</p>
+                      {message.detail && <small>{message.detail.followUp}</small>}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="note">Tell the companion what kind of prompt you need (e.g. “I’m doubting my abilities”).</p>
+              )}
+            </div>
+            <form className="chat-form" onSubmit={handleChatSubmit}>
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Ask for a prompt about..."
+              />
+              <button className="primary" type="submit" disabled={chatLoading}>
+                {chatLoading ? 'Shaping...' : 'Generate'}
+              </button>
+            </form>
+          </article>
         </div>
+      </section>
 
-        <div className="home-card">
-          <p className="micro">Reflection journal</p>
-          <h4>Keep a quick note</h4>
-          <button type="button" onClick={() => setActiveScreen('Journal')}>
-            Go to journal
+      <section className="section-block">
+        <div className="section-heading">
+          <p className="micro">Identity studios</p>
+          <h3>Build rhythms that keep you centered.</h3>
+        </div>
+        <div className="studio-strip">
+          {studioTracks.map((track) => (
+            <article key={track.title} className="studio-card glass">
+              <div>
+                <p className="micro">{track.focus}</p>
+                <h4>{track.title}</h4>
+                <p>{track.description}</p>
+              </div>
+              <p className="tag">{track.micro}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section-block">
+        <div className="section-heading">
+          <p className="micro">Navigate with intention</p>
+          <h3>Choose what you need next.</h3>
+        </div>
+        <div className="secondary-grid">
+          <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Journal')}>
+            <p className="micro">Reflection journal</p>
+            <h4>Keep a note that locks your values in.</h4>
+          </button>
+          <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Scenarios')}>
+            <p className="micro">Scenario studio</p>
+            <h4>Rehearse peer-pressure moments in calm mode.</h4>
+          </button>
+          <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Connect')}>
+            <p className="micro">Identity collaborations</p>
+            <h4>Find students who mirror your values.</h4>
+            <div className="chip-row">
+              {collaborationFocus.slice(0, 3).map((focus) => (
+                <span key={focus} className="chip">
+                  {focus}
+                </span>
+              ))}
+            </div>
+          </button>
+          <button type="button" className="secondary-card glass" onClick={() => setActiveScreen('Mentors')}>
+            <p className="micro">Mentor marketplace</p>
+            <h4>Book upper-years who keep you accountable.</h4>
           </button>
         </div>
-
-        <div className="home-card">
-          <p className="micro">Peer-pressure scenarios</p>
-          <h4>Practice tough choices</h4>
-          <button type="button" onClick={() => setActiveScreen('Scenarios')}>
-            Open simulator
-          </button>
-        </div>
-
-        <div className="home-card">
-          <p className="micro">Mentorship marketplace</p>
-          <h4>Work with upper-years</h4>
-          <button type="button" onClick={() => setActiveScreen('Mentors')}>
-            See mentors
-          </button>
-        </div>
-
-        <div className="home-card">
-          <p className="micro">Progress & trends</p>
-          <h4>{summary?.totalCheckIns ?? 0} check-ins · {summary?.negativeInfluence ?? 0} pressure flags</h4>
-          <button type="button" onClick={() => setActiveScreen('Premium')}>
-            View premium insights
-          </button>
-        </div>
-      </div>
+      </section>
     </section>
   );
 
@@ -577,6 +1000,77 @@ function App() {
     );
   };
 
+  const renderConnect = () => (
+    <section className="screen connect-screen">
+      <div className="panel glass connect-card">
+        <div className="section-heading">
+          <p className="micro">Signal your vibe</p>
+          <h3>We’ll match you with students who share your values.</h3>
+        </div>
+        <form className="stack" onSubmit={handleMatchingSubmit}>
+          <label>
+            Values you want mirrored
+            <input
+              value={matchingForm.values}
+              onChange={(event) => setMatchingForm((prev) => ({ ...prev, values: event.target.value }))}
+              placeholder="Authenticity, community care..."
+              required
+            />
+          </label>
+          <label>
+            Interests or focus areas
+            <input
+              value={matchingForm.interests}
+              onChange={(event) => setMatchingForm((prev) => ({ ...prev, interests: event.target.value }))}
+              placeholder="Mindful tech, journaling walks..."
+              required
+            />
+          </label>
+          <label>
+            What should peers know?
+            <textarea
+              value={matchingForm.highlight}
+              onChange={(event) => setMatchingForm((prev) => ({ ...prev, highlight: event.target.value }))}
+              placeholder="I’m building a ritual club for early-morning focus."
+            />
+          </label>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={matchingForm.preferAnonymous}
+              onChange={() => setMatchingForm((prev) => ({ ...prev, preferAnonymous: !prev.preferAnonymous }))}
+            />
+            Prefer anonymous intros first
+          </label>
+          <button className="primary" type="submit">
+            Send collaboration signal
+          </button>
+          {matchStatus && <p className="note">{matchStatus}</p>}
+        </form>
+      </div>
+
+      <div className="panel glass community-panel">
+        <div className="section-heading">
+          <p className="micro">Suggested communities</p>
+          <h3>Spots where students like you gather</h3>
+        </div>
+        <ul className="community-list">
+          {communityMatches.map((community) => (
+            <li key={community.id}>
+              <div>
+                <p className="micro">{community.theme}</p>
+                <h4>{community.name}</h4>
+                <p>{community.description}</p>
+              </div>
+              <span className="chip">{community.anonymousSupported ? 'Anonymous friendly' : 'Live circles'}</span>
+            </li>
+          ))}
+          {!communityMatches.length && <li>No communities yet. They'll appear after your first signal.</li>}
+        </ul>
+      </div>
+    </section>
+  );
+
   const renderProfile = () => (
     <section className="screen profile-screen">
       <div className="panel glass">
@@ -712,6 +1206,8 @@ function App() {
         return renderScenarios();
       case 'Mentors':
         return renderMentors();
+      case 'Connect':
+        return renderConnect();
       case 'Profile':
         return renderProfile();
       case 'Premium':
