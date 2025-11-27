@@ -34,8 +34,9 @@ Since your server already serves the built client, you can deploy as a single we
 4. **Build & Start Commands**
    - **Build Command**: 
      ```bash
-     cd client && npm install && npm run build && cd ../server && npm install
+     cd client && npm install --include=dev && npm run build && cd ../server && npm install
      ```
+   - **Note**: We use `--include=dev` to ensure devDependencies (like `vite`) are installed for the build
    - **Start Command**: 
      ```bash
      cd server && npm start
