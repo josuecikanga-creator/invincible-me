@@ -28,11 +28,14 @@ const hasClientBuild = fs.existsSync(distPath);
 if (hasClientBuild) {
   app.use(express.static(distPath));
   // Catch-all handler for client-side routing (Express 5 compatible)
-  app.get('/*', (req, res, next) => {
+  // Use app.use() instead of app.get() for better Express 5 compatibility
+  app.use((req, res, next) => {
+    // Skip API routes
     if (req.path.startsWith('/api')) {
       return next();
     }
-    return res.sendFile(path.join(distPath, 'index.html'));
+    // Serve index.html for all other routes (client-side routing)
+    res.sendFile(path.join(distPath, 'index.html'));
   });
 }
 
