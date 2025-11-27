@@ -27,7 +27,8 @@ const hasClientBuild = fs.existsSync(distPath);
 
 if (hasClientBuild) {
   app.use(express.static(distPath));
-  app.get('*', (req, res, next) => {
+  // Catch-all handler for client-side routing (Express 5 compatible)
+  app.get('/*', (req, res, next) => {
     if (req.path.startsWith('/api')) {
       return next();
     }
