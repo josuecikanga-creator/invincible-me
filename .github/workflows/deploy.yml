@@ -1,0 +1,47 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+      
+      - name: Install client dependencies
+        run: |
+          cd client
+          npm ci --include=dev
+      
+      - name: Build client
+        run: |
+          cd client
+          npm run build
+        env:
+          VITE_API_BASE: ${{ secrets.VITE_API_BASE || 'https://invincible-me.onrender.com/api' }}
+      
+      - name: Install server dependencies
+        run: |
+          cd server
+          npm ci
+      
+      - name: Trigger Render deployment
+        run: |
+          curl -X POST "https://api.render.com/deploy/srv-${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}"
+        if: ${{ secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != '' }}
+
